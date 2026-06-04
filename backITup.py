@@ -1,9 +1,11 @@
+import os
 import subprocess
 import sys
 
 
 def ensure_deps():
     required = ["watchdog", "schedule", "plyer"]
+    installed_any = False
     for pkg in required:
         try:
             __import__(pkg)
@@ -12,6 +14,11 @@ def ensure_deps():
             subprocess.check_call(
                 [sys.executable, "-m", "pip", "install", pkg, "--break-system-packages", "--quiet"]
             )
+            installed_any = True
+
+    if installed_any:
+        print("Dependencies installed. Restarting...")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def ensure_tkinter():
