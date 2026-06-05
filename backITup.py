@@ -214,9 +214,9 @@ def run_in_background():
     signal.signal(signal.SIGTERM, _sigterm)
 
     # Keep main thread alive; check for reload requests
+    global _reload_requested
     while True:
         if _reload_requested:
-            global _reload_requested
             _reload_requested = False
             reload_systems()
         time.sleep(1)
