@@ -249,13 +249,22 @@ def _drain_notifications():
             break
 
 
+_LOGO = """
+██████╗  █████╗  ██████╗██╗  ██╗  ██╗████████╗██╗   ██╗██████╗
+██╔══██╗██╔══██╗██╔════╝██║ ██╔╝  ██║╚══██╔══╝██║   ██║██╔══██╗
+██████╔╝███████║██║     █████╔╝   ██║   ██║   ██║   ██║██████╔╝
+██╔══██╗██╔══██║██║     ██╔═██╗   ██║   ██║   ██║   ██║██╔═══╝
+██████╔╝██║  ██║╚██████╗██║  ██╗  ██║   ██║   ╚██████╔╝██║
+╚═════╝ ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝
+"""
+
+
 def print_menu(connected: bool):
-    print("\n╔══════════════════════════════╗")
-    print("║         backITup             ║")
-    print("╚══════════════════════════════╝")
+    print(_LOGO)
+    print("  Automated File Backup System")
     if connected:
-        print("  [connected to background daemon]\n")
-    print("Hello! What do you want to do today?\n")
+        print("  [connected to background daemon]")
+    print("\nHello! What do you want to do today?\n")
     print("[1] Create a new backup system")
     print("[2] Configure a current backup system")
     print("[3] Delete a backup system")
