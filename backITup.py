@@ -273,11 +273,12 @@ def print_menu(connected: bool):
     print("[1] Create a new backup system")
     print("[2] Configure a current backup system")
     print("[3] Delete a backup system")
+    print("[4] Stop all backup systems")
     if connected:
-        print("[4] Exit  (daemon keeps running in background)\n")
+        print("[5] Exit  (daemon keeps running in background)\n")
     else:
-        print("[4] Run in background")
-        print("[5] Exit\n")
+        print("[5] Run in background")
+        print("[6] Exit\n")
 
 
 # ── menu actions ──────────────────────────────────────────────────────────────
@@ -477,6 +478,36 @@ def delete_backup_system(daemon_pid=None):
     pause()
 
 
+def stop_all_systems(daemon_pid=None):
+    confirm = input("Are you sure you want to stop ALL backup systems? (y/n): ").strip().lower()
+    if confirm != "y":
+        print("Cancelled.")
+        pause()
+        return False
+
+    if daemon_pid:
+        try:
+            os.kill(daemon_pid, signal.SIGTERM)
+            time.sleep(1)
+        except Exception as e:
+            logger.error(f"Could not stop daemon: {e}")
+        try:
+            DAEMON_PID_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+        print("\nBackground daemon stopped. All backup systems are now inactive.")
+    else:
+        names = list(running_systems.keys())
+        for name in names:
+            stop_system(name)
+        print(f"\nStopped {len(names)} backup system(s).")
+
+    print("Your backup configurations are saved. Run backITup.py again to resume them.")
+    logger.info("All backup systems stopped by user.")
+    pause()
+    return True
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
@@ -499,9 +530,14 @@ def main():
             configure_backup_system(daemon_pid if daemon_running else None)
         elif choice == "3":
             delete_backup_system(daemon_pid if daemon_running else None)
-        elif choice == "4" and not daemon_running:
+        elif choice == "4":
+            stopped = stop_all_systems(daemon_pid if daemon_running else None)
+            if stopped and daemon_running:
+                daemon_running = False
+                daemon_pid = None
+        elif choice == "5" and not daemon_running:
             run_in_background()
-        elif (choice == "4" and daemon_running) or (choice == "5" and not daemon_running):
+        elif (choice == "5" and daemon_running) or (choice == "6" and not daemon_running):
             if daemon_running:
                 print("Menu closed. Backup systems continue running in the background.")
             else:
