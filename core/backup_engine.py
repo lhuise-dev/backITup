@@ -1,4 +1,6 @@
+import logging
 import shutil
+import sys
 from pathlib import Path
 
 from core.logger import get_logger
@@ -63,20 +65,45 @@ class BackupEngine:
                 logger.error(f"Failed to move backup {backup_src}: {e}")
 
     def full_sync(self):
-        logger.info(f"[{self.name}] Starting full sync...")
         ensure_dir(self.backup_destination)
 
         if not self.watch_folder.exists():
             logger.error(f"Watch folder does not exist: {self.watch_folder}")
             return
 
-        count = 0
-        for src_file in self.watch_folder.rglob("*"):
-            if src_file.is_file():
-                self.backup_file(src_file)
-                count += 1
+        files = [f for f in self.watch_folder.rglob("*") if f.is_file()]
+        total = len(files)
 
-        logger.info(f"[{self.name}] Full sync complete — {count} file(s) processed.")
+        if total == 0:
+            print(f"\n[{self.name}] Nothing to sync — folder is empty.")
+            return
+
+        print(f"\nSyncing '{self.name}'...")
+
+        # Silence console during sync so progress bar isn't interrupted by per-file logs
+        root_logger = logging.getLogger("backITup")
+        console_handlers = [
+            h for h in root_logger.handlers
+            if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)
+        ]
+        for h in console_handlers:
+            root_logger.removeHandler(h)
+
+        try:
+            for i, src_file in enumerate(files, 1):
+                self.backup_file(src_file)
+                percent = int((i / total) * 100)
+                filled = int(percent / 2)  # 50-char wide bar
+                bar = "█" * filled + "░" * (50 - filled)
+                sys.stdout.write(f"\r  [{bar}] {percent:>3}%  ({i}/{total})")
+                sys.stdout.flush()
+        finally:
+            for h in console_handlers:
+                root_logger.addHandler(h)
+
+        sys.stdout.write(f"\r  [{'█' * 50}] 100%  ({total}/{total}) — Done!          \n")
+        sys.stdout.flush()
+        logger.info(f"[{self.name}] Full sync complete — {total} file(s) processed.")
 
     def _rotate_versions(self, backup_path: Path):
         stem = backup_path.stem
