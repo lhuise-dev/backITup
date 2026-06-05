@@ -241,6 +241,10 @@ def pick_folder(title: str) -> str:
     return input(f"{title}\nEnter folder path manually: ").strip()
 
 
+def pause():
+    input("\nPress Enter to go back to the menu...")
+
+
 def _drain_notifications():
     while True:
         try:
@@ -284,22 +288,26 @@ def create_backup_system(daemon_pid=None):
     name = input("Enter a name for this backup system: ").strip()
     if not name:
         print("Name cannot be empty.")
+        pause()
         return
 
     if any(c["name"] == name for c in manager.load_all()):
         print(f"A backup system named '{name}' already exists.")
+        pause()
         return
 
     print("\nSelect the folder to WATCH (source):")
     watch_folder = pick_folder("Select the folder to WATCH (source)")
     if not watch_folder:
         print("No folder selected. Cancelled.")
+        pause()
         return
 
     print("\nSelect the folder where BACKUPS will be stored (destination):")
     backup_destination = pick_folder("Select BACKUP DESTINATION folder")
     if not backup_destination:
         print("No folder selected. Cancelled.")
+        pause()
         return
 
     try:
@@ -332,6 +340,7 @@ def create_backup_system(daemon_pid=None):
         launch_system(config)
         logger.info(f"Created and launched backup system: {name}")
         print(f"\nBackup system '{name}' is now running in the background.")
+    pause()
 
 
 def configure_backup_system(daemon_pid=None):
@@ -340,6 +349,7 @@ def configure_backup_system(daemon_pid=None):
 
     if not configs:
         print("No backup systems found.")
+        pause()
         return
 
     print("\nAvailable backup systems:")
@@ -350,9 +360,11 @@ def configure_backup_system(daemon_pid=None):
         choice = int(input("\nSelect a backup system to configure: ").strip())
         if not 1 <= choice <= len(configs):
             print("Invalid selection.")
+            pause()
             return
     except ValueError:
         print("Invalid input.")
+        pause()
         return
 
     config = configs[choice - 1]
@@ -377,6 +389,7 @@ def configure_backup_system(daemon_pid=None):
         new_dest = pick_folder("Select new BACKUP DESTINATION folder")
         if not new_dest:
             print("No folder selected. Cancelled.")
+            pause()
             return
         config["backup_destination"] = str(Path(new_dest).expanduser().resolve())
     elif sub == "2":
@@ -384,15 +397,18 @@ def configure_backup_system(daemon_pid=None):
             config["interval_minutes"] = int(input("New interval in minutes: ").strip())
         except ValueError:
             print("Invalid input.")
+            pause()
             return
     elif sub == "3":
         try:
             config["max_versions"] = int(input("New max versions: ").strip())
         except ValueError:
             print("Invalid input.")
+            pause()
             return
     else:
         print("Invalid choice.")
+        pause()
         return
 
     manager.update(name, config)
@@ -405,6 +421,7 @@ def configure_backup_system(daemon_pid=None):
         launch_system(config)
         logger.info(f"Reconfigured and restarted backup system: {name}")
         print(f"\nBackup system '{name}' has been updated and restarted.")
+    pause()
 
 
 def delete_backup_system(daemon_pid=None):
@@ -413,6 +430,7 @@ def delete_backup_system(daemon_pid=None):
 
     if not configs:
         print("No backup systems found.")
+        pause()
         return
 
     print("\nAvailable backup systems:")
@@ -426,9 +444,11 @@ def delete_backup_system(daemon_pid=None):
             return
         if not 1 <= choice <= len(configs):
             print("Invalid selection.")
+            pause()
             return
     except ValueError:
         print("Invalid input.")
+        pause()
         return
 
     config = configs[choice - 1]
@@ -437,6 +457,7 @@ def delete_backup_system(daemon_pid=None):
     confirm = input(f"Are you sure you want to delete '{name}'? (y/n): ").strip().lower()
     if confirm != "y":
         print("Cancelled.")
+        pause()
         return
 
     manager.remove(name)
@@ -453,6 +474,7 @@ def delete_backup_system(daemon_pid=None):
 
     logger.info(f"Deleted backup system: {name}")
     print(f"\nBackup system '{name}' has been deleted.")
+    pause()
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -487,6 +509,7 @@ def main():
             sys.exit(0)
         else:
             print("Invalid choice.")
+            pause()
 
 
 if __name__ == "__main__":
