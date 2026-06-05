@@ -260,6 +260,7 @@ _LOGO = """
 
 
 def print_menu(connected: bool):
+    os.system("clear")
     print(_LOGO)
     print("  Automated File Backup System")
     if connected:
