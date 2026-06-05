@@ -36,6 +36,7 @@ def ensure_tkinter():
 ensure_deps()
 ensure_tkinter()
 
+import queue
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -51,6 +52,9 @@ from core.scheduler import start_scheduler, stop_scheduler
 from utils.file_utils import delete_path
 
 logger = get_logger()
+
+# Background threads post notifications here; main loop drains and prints them safely
+_notifications: queue.Queue = queue.Queue()
 
 # Global registry: { name: { "watcher": observer, "scheduler_thread": thread, "stop_event": event } }
 running_systems: dict = {}
@@ -87,7 +91,7 @@ def print_menu():
 def launch_system(config: dict):
     name = config["name"]
     stop_event = threading.Event()
-    engine = BackupEngine(config)
+    engine = BackupEngine(config, notify=_notifications.put)
     observer = start_watcher(config, engine)
     scheduler_thread = start_scheduler(config, engine, stop_event)
     running_systems[name] = {
@@ -281,12 +285,22 @@ def delete_backup_system():
     print(f"\nBackup system '{name}' has been deleted.")
 
 
+def _drain_notifications():
+    while True:
+        try:
+            print(_notifications.get_nowait())
+        except queue.Empty:
+            break
+
+
 def main():
     resume_all_systems()
 
     while True:
+        _drain_notifications()
         print_menu()
         choice = input("Enter your choice: ").strip()
+        _drain_notifications()
 
         if choice == "1":
             create_backup_system()

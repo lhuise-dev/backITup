@@ -8,11 +8,12 @@ logger = get_logger()
 
 
 class BackupEngine:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, notify=None):
         self.name = config["name"]
         self.watch_folder = Path(config["watch_folder"])
         self.backup_destination = Path(config["backup_destination"])
         self.max_versions = config.get("max_versions", 5)
+        self._notify = notify or (lambda msg: None)
 
     def _backup_path(self, source: Path) -> Path:
         try:
@@ -78,7 +79,7 @@ class BackupEngine:
         logger.debug(f"[{self.name}] Full sync complete — {total} file(s) processed.")
 
         if announce:
-            print(f"\n  ✓ '{self.name}' — initial backup complete ({total} file(s) backed up).")
+            self._notify(f"\n  ✓ '{self.name}' — initial backup complete ({total} file(s) backed up).")
 
         return total
 
