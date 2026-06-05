@@ -37,7 +37,9 @@ ensure_deps()
 ensure_tkinter()
 
 import queue
+import signal
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -48,17 +50,179 @@ from core.logger import get_logger
 from core.config_manager import ConfigManager
 from core.backup_engine import BackupEngine
 from core.watcher import start_watcher, stop_watcher
-from core.scheduler import start_scheduler, stop_scheduler
+from core.scheduler import start_scheduler
 from utils.file_utils import delete_path
 
 logger = get_logger()
 
-# Background threads post notifications here; main loop drains and prints them safely
+DAEMON_PID_FILE = BASE_DIR / "data" / "backITup.pid"
+
+# Background threads post notifications here; main loop drains them safely
 _notifications: queue.Queue = queue.Queue()
 
-# Global registry: { name: { "watcher": observer, "scheduler_thread": thread, "stop_event": event } }
+# { name: { "config", "watcher", "scheduler_thread", "stop_event", "engine" } }
 running_systems: dict = {}
 
+# Set by SIGUSR1 handler in daemon mode; main loop acts on it
+_reload_requested = False
+
+
+# ── daemon detection ─────────────────────────────────────────────────────────
+
+def is_daemon_running():
+    if not DAEMON_PID_FILE.exists():
+        return False, None
+    try:
+        pid = int(DAEMON_PID_FILE.read_text().strip())
+        os.kill(pid, 0)   # raises if process doesn't exist
+        return True, pid
+    except Exception:
+        try:
+            DAEMON_PID_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False, None
+
+
+def signal_daemon(daemon_pid: int):
+    try:
+        os.kill(daemon_pid, signal.SIGUSR1)
+    except Exception:
+        pass
+
+
+# ── thread management ─────────────────────────────────────────────────────────
+
+def launch_system(config: dict):
+    name = config["name"]
+    stop_event = threading.Event()
+    engine = BackupEngine(config, notify=_notifications.put)
+    observer = start_watcher(config, engine)
+    scheduler_thread = start_scheduler(config, engine, stop_event)
+    running_systems[name] = {
+        "config": config,
+        "watcher": observer,
+        "scheduler_thread": scheduler_thread,
+        "stop_event": stop_event,
+        "engine": engine,
+    }
+
+
+def stop_system(name: str):
+    if name in running_systems:
+        entry = running_systems.pop(name)
+        entry["stop_event"].set()
+        stop_watcher(entry["watcher"])
+
+
+def reload_systems():
+    """Diff running systems against saved config; start/stop/restart as needed."""
+    configs = ConfigManager().load_all()
+    config_map = {c["name"]: c for c in configs}
+    running_names = set(running_systems.keys())
+    config_names = set(config_map.keys())
+
+    for name in running_names - config_names:
+        stop_system(name)
+        logger.info(f"[daemon] Stopped removed system: {name}")
+
+    for name in config_names - running_names:
+        try:
+            launch_system(config_map[name])
+            logger.info(f"[daemon] Started new system: {name}")
+        except Exception as e:
+            logger.error(f"[daemon] Failed to start '{name}': {e}")
+
+    for name in config_names & running_names:
+        if config_map[name] != running_systems[name].get("config"):
+            stop_system(name)
+            try:
+                launch_system(config_map[name])
+                logger.info(f"[daemon] Restarted changed system: {name}")
+            except Exception as e:
+                logger.error(f"[daemon] Failed to restart '{name}': {e}")
+
+
+def resume_all_systems():
+    configs = ConfigManager().load_all()
+    if not configs:
+        return
+    print(f"Resuming {len(configs)} backup system(s) in the background...")
+    for config in configs:
+        try:
+            launch_system(config)
+            logger.info(f"Resumed: {config['name']}")
+        except Exception as e:
+            logger.error(f"Failed to resume '{config['name']}': {e}")
+
+
+# ── daemonize ─────────────────────────────────────────────────────────────────
+
+def run_in_background():
+    """Fork into a proper Unix daemon; parent exits, child keeps backup running."""
+    pid = os.fork()
+    if pid > 0:
+        # Parent: tell user and exit
+        print(f"\nbackITup is now running in the background (PID: {pid}).")
+        print("Run 'python3 backITup.py' again to open the menu.")
+        sys.exit(0)
+
+    # Child: detach from terminal
+    os.setsid()
+
+    # Second fork so daemon is not a session leader (can't re-acquire terminal)
+    pid2 = os.fork()
+    if pid2 > 0:
+        sys.exit(0)
+
+    # Grandchild = the actual daemon
+    DAEMON_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    DAEMON_PID_FILE.write_text(str(os.getpid()))
+
+    # Detach from terminal I/O
+    devnull_r = open(os.devnull, "r")
+    devnull_w = open(os.devnull, "w")
+    os.dup2(devnull_r.fileno(), 0)
+    os.dup2(devnull_w.fileno(), 1)
+    os.dup2(devnull_w.fileno(), 2)
+
+    # Threads are NOT inherited across fork — re-launch everything
+    running_systems.clear()
+    for config in ConfigManager().load_all():
+        try:
+            launch_system(config)
+        except Exception as e:
+            logger.error(f"[daemon] Failed to launch '{config['name']}': {e}")
+
+    # SIGUSR1 → schedule a reload (safe: avoid doing heavy work inside signal handler)
+    def _sigusr1(sig, frame):
+        global _reload_requested
+        _reload_requested = True
+
+    signal.signal(signal.SIGUSR1, _sigusr1)
+
+    # SIGTERM → clean shutdown
+    def _sigterm(sig, frame):
+        for name in list(running_systems.keys()):
+            stop_system(name)
+        try:
+            DAEMON_PID_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _sigterm)
+
+    # Keep main thread alive; check for reload requests
+    while True:
+        if _reload_requested:
+            global _reload_requested
+            _reload_requested = False
+            reload_systems()
+        time.sleep(1)
+
+
+# ── UI helpers ────────────────────────────────────────────────────────────────
 
 def pick_folder(title: str) -> str:
     try:
@@ -77,52 +241,34 @@ def pick_folder(title: str) -> str:
     return input(f"{title}\nEnter folder path manually: ").strip()
 
 
-def print_menu():
+def _drain_notifications():
+    while True:
+        try:
+            print(_notifications.get_nowait())
+        except queue.Empty:
+            break
+
+
+def print_menu(connected: bool):
     print("\n╔══════════════════════════════╗")
     print("║         backITup             ║")
     print("╚══════════════════════════════╝")
-    print("\nHello! What do you want to do today?\n")
+    if connected:
+        print("  [connected to background daemon]\n")
+    print("Hello! What do you want to do today?\n")
     print("[1] Create a new backup system")
     print("[2] Configure a current backup system")
     print("[3] Delete a backup system")
-    print("[4] Exit\n")
+    if connected:
+        print("[4] Exit  (daemon keeps running in background)\n")
+    else:
+        print("[4] Run in background")
+        print("[5] Exit\n")
 
 
-def launch_system(config: dict):
-    name = config["name"]
-    stop_event = threading.Event()
-    engine = BackupEngine(config, notify=_notifications.put)
-    observer = start_watcher(config, engine)
-    scheduler_thread = start_scheduler(config, engine, stop_event)
-    running_systems[name] = {
-        "watcher": observer,
-        "scheduler_thread": scheduler_thread,
-        "stop_event": stop_event,
-        "engine": engine,
-    }
+# ── menu actions ──────────────────────────────────────────────────────────────
 
-
-def stop_system(name: str):
-    if name in running_systems:
-        entry = running_systems.pop(name)
-        entry["stop_event"].set()
-        stop_watcher(entry["watcher"])
-
-
-def resume_all_systems():
-    configs = ConfigManager().load_all()
-    if not configs:
-        return
-    print(f"Resuming {len(configs)} backup system(s) in the background...")
-    for config in configs:
-        try:
-            launch_system(config)
-            logger.info(f"Resumed backup system: {config['name']}")
-        except Exception as e:
-            logger.error(f"Failed to resume '{config['name']}': {e}")
-
-
-def create_backup_system():
+def create_backup_system(daemon_pid=None):
     manager = ConfigManager()
 
     name = input("Enter a name for this backup system: ").strip()
@@ -168,12 +314,17 @@ def create_backup_system():
     }
 
     manager.add(config)
-    launch_system(config)
-    logger.info(f"Created and launched backup system: {name}")
-    print(f"\nBackup system '{name}' is now running in the background.")
+
+    if daemon_pid:
+        signal_daemon(daemon_pid)
+        print(f"\nBackup system '{name}' created. The background daemon is picking it up.")
+    else:
+        launch_system(config)
+        logger.info(f"Created and launched backup system: {name}")
+        print(f"\nBackup system '{name}' is now running in the background.")
 
 
-def configure_backup_system():
+def configure_backup_system(daemon_pid=None):
     manager = ConfigManager()
     configs = manager.load_all()
 
@@ -235,13 +386,18 @@ def configure_backup_system():
         return
 
     manager.update(name, config)
-    stop_system(name)
-    launch_system(config)
-    logger.info(f"Reconfigured and restarted backup system: {name}")
-    print(f"\nBackup system '{name}' has been updated and restarted.")
+
+    if daemon_pid:
+        signal_daemon(daemon_pid)
+        print(f"\nBackup system '{name}' updated. The background daemon is applying changes.")
+    else:
+        stop_system(name)
+        launch_system(config)
+        logger.info(f"Reconfigured and restarted backup system: {name}")
+        print(f"\nBackup system '{name}' has been updated and restarted.")
 
 
-def delete_backup_system():
+def delete_backup_system(daemon_pid=None):
     manager = ConfigManager()
     configs = manager.load_all()
 
@@ -273,8 +429,12 @@ def delete_backup_system():
         print("Cancelled.")
         return
 
-    stop_system(name)
     manager.remove(name)
+
+    if daemon_pid:
+        signal_daemon(daemon_pid)
+    else:
+        stop_system(name)
 
     also_delete = input("Do you also want to delete the backed-up files? (y/n): ").strip().lower()
     if also_delete == "y":
@@ -285,34 +445,38 @@ def delete_backup_system():
     print(f"\nBackup system '{name}' has been deleted.")
 
 
-def _drain_notifications():
-    while True:
-        try:
-            print(_notifications.get_nowait())
-        except queue.Empty:
-            break
-
+# ── main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    resume_all_systems()
+    daemon_running, daemon_pid = is_daemon_running()
+
+    if daemon_running:
+        print(f"backITup daemon is already running in the background (PID: {daemon_pid}).")
+    else:
+        resume_all_systems()
 
     while True:
         _drain_notifications()
-        print_menu()
+        print_menu(connected=daemon_running)
         choice = input("Enter your choice: ").strip()
         _drain_notifications()
 
         if choice == "1":
-            create_backup_system()
+            create_backup_system(daemon_pid if daemon_running else None)
         elif choice == "2":
-            configure_backup_system()
+            configure_backup_system(daemon_pid if daemon_running else None)
         elif choice == "3":
-            delete_backup_system()
-        elif choice == "4":
-            print("Goodbye! Backup systems will stop when this process exits.")
+            delete_backup_system(daemon_pid if daemon_running else None)
+        elif choice == "4" and not daemon_running:
+            run_in_background()
+        elif (choice == "4" and daemon_running) or (choice == "5" and not daemon_running):
+            if daemon_running:
+                print("Menu closed. Backup systems continue running in the background.")
+            else:
+                print("Goodbye! Backup systems will stop when this process exits.")
             sys.exit(0)
         else:
-            print("Invalid choice. Please enter 1, 2, 3, or 4.")
+            print("Invalid choice.")
 
 
 if __name__ == "__main__":
