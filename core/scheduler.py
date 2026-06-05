@@ -16,8 +16,8 @@ def start_scheduler(config: dict, engine, stop_event: threading.Event) -> thread
         sched = _schedule.Scheduler()
         sched.every(interval).minutes.do(engine.full_sync)
 
-        # Run an initial full sync immediately on startup
-        engine.full_sync()
+        # Initial sync — prints one summary line when done, then stays silent
+        engine.full_sync(announce=True)
 
         while not stop_event.is_set():
             sched.run_pending()
