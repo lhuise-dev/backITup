@@ -18,17 +18,24 @@ BACKUP_EVENTS = (
     "backup_failed",
 )
 
-try:
-    from flask_socketio import SocketIO
+# Created lazily by init_socketio() inside the Flask app factory, NOT at import
+# time — instantiating SocketIO before the app exists left this stuck at None.
+_socketio = None
 
-    _socketio = SocketIO(async_mode="threading", cors_allowed_origins="*")
-except Exception as e:  # ImportError or any init failure
-    _socketio = None
-    logger.debug(f"SocketIO unavailable (dashboard optional): {e}")
+
+def init_socketio():
+    """Instantiate the shared SocketIO instance. Called first in create_app()."""
+    global _socketio
+    try:
+        from flask_socketio import SocketIO
+        _socketio = SocketIO(async_mode="threading", cors_allowed_origins="*")
+    except Exception as e:
+        logger.error(f"SocketIO init failed: {e}")
+        _socketio = None
 
 
 def get_socketio():
-    """Return the shared SocketIO instance (may be None if Flask not installed)."""
+    """Return the shared SocketIO instance (None until init_socketio() runs)."""
     return _socketio
 
 
