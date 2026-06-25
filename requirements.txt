@@ -1,4 +1,15 @@
-# Add your project dependencies here
-# Example:
-# requests==2.32.3
-# click==8.1.8
+# backITup runtime dependencies.
+# These are auto-installed on first launch by ensure_deps() in backITup.py,
+# but are listed here for manual installation: pip install -r requirements.txt
+
+watchdog>=3.0.0          # filesystem event monitoring (the watcher daemon)
+schedule>=1.2.0          # interval-based full sync scheduling
+plyer>=2.1.0             # desktop notifications (fail-silent)
+cryptography>=42.0.0     # AES/Fernet encryption + PBKDF2HMAC key derivation
+bcrypt>=4.1.0            # password hashing for authentication
+flask>=3.0.0             # web dashboard
+flask-socketio>=5.3.0    # real-time dashboard updates
+flask-login>=0.6.3       # dashboard session/login management
+
+# Documentation generation only (not required to run backITup):
+# python-docx>=1.1.0

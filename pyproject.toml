@@ -1,16 +1,26 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
-
 [project]
 name = "backitup"
-version = "0.1.0"
-description = "A Python backup utility"
-requires-python = ">=3.10"
-dependencies = []
+version = "1.0.0"
+description = "Automated file backup daemon with encryption, role-based auth, a real-time web dashboard, email alerts, and recovery testing."
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [{ name = "Lhuise Gahbrielle Valila" }]
+license = { text = "MIT" }
+keywords = ["backup", "encryption", "daemon", "flask", "dashboard"]
 
-[project.scripts]
-backitup = "backitup.__main__:main"
+dependencies = [
+    "watchdog>=3.0.0",
+    "schedule>=1.2.0",
+    "plyer>=2.1.0",
+    "cryptography>=42.0.0",
+    "bcrypt>=4.1.0",
+    "flask>=3.0.0",
+    "flask-socketio>=5.3.0",
+    "flask-login>=0.6.3",
+]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[project.optional-dependencies]
+docs = ["python-docx>=1.1.0"]
+
+# backITup is launched directly with `python backITup.py` rather than installed
+# as a package, so no build-system or entry-point configuration is required.

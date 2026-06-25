@@ -32,3 +32,11 @@ htmlcov/
 
 # Distribution
 *.spec
+
+# backITup runtime state and secrets (never commit)
+data/*.key
+data/users.json
+data/email_config.json
+data/benchmarks.json
+logs/
+backITup_documentation.pdf

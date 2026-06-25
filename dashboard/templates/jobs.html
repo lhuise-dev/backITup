@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-6">Backup Job History</h1>
+
+<!-- Tab bar -->
+<div class="flex gap-6 border-b border-gray-200 mb-6">
+  <button id="tab-btn-jobs" type="button"
+          class="pb-2 -mb-px text-sm font-medium border-b-2 border-blue-600 text-blue-600">
+    Job History
+  </button>
+  <button id="tab-btn-benchmarks" type="button"
+          class="pb-2 -mb-px text-sm font-medium text-gray-500 hover:text-gray-700">
+    Benchmarks
+  </button>
+</div>
+
+<!-- ── Tab 1: Job History ───────────────────────────────────────────────── -->
+<div id="tab-jobs">
+  <!-- Filter bar (client-side) -->
+  <div class="bg-white rounded-lg shadow p-4 mb-6 flex flex-wrap items-end gap-4">
+    <div>
+      <label class="block text-xs font-medium text-gray-600 mb-1">Date</label>
+      <input id="filter-date" type="date"
+             class="px-3 py-2 border border-gray-300 rounded text-sm" />
+    </div>
+    <div>
+      <label class="block text-xs font-medium text-gray-600 mb-1">Status</label>
+      <select id="filter-status" class="px-3 py-2 border border-gray-300 rounded text-sm">
+        <option value="All">All</option>
+        <option value="Success">Success</option>
+        <option value="Failed">Failed</option>
+      </select>
+    </div>
+    <button id="filter-btn" type="button"
+            class="px-4 py-2 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white transition">
+      Search
+    </button>
+  </div>
+
+  <div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-gray-600 text-left">
+        <tr>
+          <th class="px-4 py-3 font-semibold">Timestamp</th>
+          <th class="px-4 py-3 font-semibold">System</th>
+          <th class="px-4 py-3 font-semibold">Files</th>
+          <th class="px-4 py-3 font-semibold">Duration</th>
+          <th class="px-4 py-3 font-semibold">Status</th>
+        </tr>
+      </thead>
+      <tbody id="jobs-body" class="divide-y divide-gray-100">
+        {% for j in jobs %}
+        <tr class="job-row" data-status="{{ j.status }}" data-timestamp="{{ j.timestamp }}">
+          <td class="px-4 py-3 text-gray-700">{{ j.timestamp }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ j.system }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ j.files }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ j.duration }}</td>
+          <td class="px-4 py-3">
+            {% if j.status == 'Success' %}
+              <span class="px-2 py-1 text-xs font-semibold rounded bg-green-100 text-green-700">Success</span>
+            {% else %}
+              <span class="px-2 py-1 text-xs font-semibold rounded bg-red-100 text-red-700">Failed</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="px-4 py-6 text-center text-gray-400">No job history found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ── Tab 2: Benchmarks ────────────────────────────────────────────────── -->
+<div id="tab-benchmarks" class="hidden">
+  {% set backup_rows = benchmarks | selectattr('type', 'equalto', 'benchmark') | list %}
+  {% set restore_rows = benchmarks | selectattr('type', 'equalto', 'restore_test') | list %}
+
+  {% if not benchmarks %}
+  <div class="bg-white rounded-lg shadow p-6 text-center text-gray-400">
+    No benchmark data yet.
+  </div>
+  {% else %}
+
+  <!-- Sub-section A: Backup Benchmarks -->
+  <h2 class="text-lg font-bold text-gray-800 mb-3">Backup Benchmarks</h2>
+  <div class="bg-white rounded-lg shadow overflow-hidden mb-8">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-gray-600 text-left">
+        <tr>
+          <th class="px-4 py-3 font-semibold">Timestamp</th>
+          <th class="px-4 py-3 font-semibold">System</th>
+          <th class="px-4 py-3 font-semibold">Files</th>
+          <th class="px-4 py-3 font-semibold">Size (MB)</th>
+          <th class="px-4 py-3 font-semibold">Duration (s)</th>
+          <th class="px-4 py-3 font-semibold">Throughput (MB/s)</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for b in backup_rows %}
+        <tr>
+          <td class="px-4 py-3 text-gray-700">{{ b.timestamp }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ b.system }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ b.files }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ b.total_mb }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ b.duration_seconds }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ b.throughput_mbps }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="px-4 py-6 text-center text-gray-400">No backup benchmarks yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Sub-section B: Restore Tests -->
+  <h2 class="text-lg font-bold text-gray-800 mb-3">Restore Tests</h2>
+  <div class="bg-white rounded-lg shadow overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 text-gray-600 text-left">
+        <tr>
+          <th class="px-4 py-3 font-semibold">Timestamp</th>
+          <th class="px-4 py-3 font-semibold">System</th>
+          <th class="px-4 py-3 font-semibold">Files Tested</th>
+          <th class="px-4 py-3 font-semibold">Passed</th>
+          <th class="px-4 py-3 font-semibold">Failed</th>
+          <th class="px-4 py-3 font-semibold">Total Time (s)</th>
+          <th class="px-4 py-3 font-semibold">Rating</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for r in restore_rows %}
+        {% set rating = ratings.get(r.system, 'Insufficient Data') %}
+        <tr>
+          <td class="px-4 py-3 text-gray-700">{{ r.timestamp }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ r.system }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ r.files_tested }}</td>
+          <td class="px-4 py-3 text-green-700 font-medium">{{ r.passed }}</td>
+          <td class="px-4 py-3 text-red-700 font-medium">{{ r.failed }}</td>
+          <td class="px-4 py-3 text-gray-700">{{ r.total_restore_time_seconds }}</td>
+          <td class="px-4 py-3">
+            {% if rating == 'Excellent' %}
+              <span class="px-2 py-1 text-xs font-semibold rounded bg-green-100 text-green-700">Excellent</span>
+            {% elif rating == 'Good' %}
+              <span class="px-2 py-1 text-xs font-semibold rounded bg-yellow-100 text-yellow-700">Good</span>
+            {% elif rating == 'Poor' %}
+              <span class="px-2 py-1 text-xs font-semibold rounded bg-red-100 text-red-700">Poor</span>
+            {% else %}
+              <span class="px-2 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-600">Insufficient Data</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" class="px-4 py-6 text-center text-gray-400">No restore tests yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    // Job History filter
+    const btn = document.getElementById("filter-btn");
+    if (btn) {
+      btn.addEventListener("click", function () {
+        const status = document.getElementById("filter-status").value;
+        const date = document.getElementById("filter-date").value; // yyyy-mm-dd or ""
+        document.querySelectorAll(".job-row").forEach(function (row) {
+          const rowStatus = row.getAttribute("data-status");
+          const rowTs = row.getAttribute("data-timestamp") || "";
+          const statusOk = status === "All" || rowStatus === status;
+          const dateOk = !date || rowTs.indexOf(date) === 0;
+          row.style.display = statusOk && dateOk ? "" : "none";
+        });
+      });
+    }
+
+    // Tab switching
+    const tabs = {
+      jobs: {
+        btn: document.getElementById("tab-btn-jobs"),
+        panel: document.getElementById("tab-jobs"),
+      },
+      benchmarks: {
+        btn: document.getElementById("tab-btn-benchmarks"),
+        panel: document.getElementById("tab-benchmarks"),
+      },
+    };
+    const ACTIVE = ["border-b-2", "border-blue-600", "text-blue-600"];
+    const INACTIVE = ["text-gray-500", "hover:text-gray-700"];
+
+    function activate(name) {
+      Object.keys(tabs).forEach(function (key) {
+        const t = tabs[key];
+        const on = key === name;
+        t.panel.classList.toggle("hidden", !on);
+        ACTIVE.forEach(c => t.btn.classList.toggle(c, on));
+        INACTIVE.forEach(c => t.btn.classList.toggle(c, !on));
+      });
+    }
+
+    tabs.jobs.btn.addEventListener("click", function () { activate("jobs"); });
+    tabs.benchmarks.btn.addEventListener("click", function () { activate("benchmarks"); });
+  })();
+</script>
+{% endblock %}
