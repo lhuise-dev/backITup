@@ -8,7 +8,7 @@ from flask_login import LoginManager, UserMixin
 
 from core import auth
 from core.logger import get_logger
-from dashboard.socket_events import get_socketio
+from dashboard.socket_events import get_socketio, init_socketio
 
 logger = get_logger()
 
@@ -46,6 +46,9 @@ class DashboardUser(UserMixin):
 
 def create_app():
     """Build and return a configured Flask app (SocketIO is the shared global)."""
+    # Initialize SocketIO first, before anything else uses it.
+    init_socketio()
+
     app = Flask(__name__)
     app.config["SECRET_KEY"] = _get_secret_key()
     app.config["DEBUG"] = False
