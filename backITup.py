@@ -4,15 +4,26 @@ import sys
 
 
 def ensure_deps():
-    required = ["watchdog", "schedule", "plyer"]
+    # pip install name -> importable module name (they differ for the flask extras,
+    # so we must check the module name or we'd reinstall on every launch).
+    required = {
+        "watchdog": "watchdog",
+        "schedule": "schedule",
+        "plyer": "plyer",
+        "cryptography": "cryptography",
+        "bcrypt": "bcrypt",
+        "flask": "flask",
+        "flask-socketio": "flask_socketio",
+        "flask-login": "flask_login",
+    }
     installed_any = False
-    for pkg in required:
+    for pip_name, import_name in required.items():
         try:
-            __import__(pkg)
+            __import__(import_name)
         except ImportError:
-            print(f"Installing {pkg}...")
+            print(f"Installing {pip_name}...")
             subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", pkg, "--break-system-packages", "--quiet"]
+                [sys.executable, "-m", "pip", "install", pip_name, "--break-system-packages", "--quiet"]
             )
             installed_any = True
 
@@ -36,6 +47,7 @@ def ensure_tkinter():
 ensure_deps()
 ensure_tkinter()
 
+import getpass
 import queue
 import signal
 import threading
@@ -51,9 +63,20 @@ from core.config_manager import ConfigManager
 from core.backup_engine import BackupEngine
 from core.watcher import start_watcher, stop_watcher
 from core.scheduler import start_scheduler
+from core import auth
+from core import encryption
+
+try:
+    from core import benchmark as bm
+except ImportError:
+    bm = None
 from utils.file_utils import delete_path
 
 logger = get_logger()
+
+# Set after a successful login; gates which menu actions are available.
+current_user: str | None = None
+current_role: str | None = None
 
 DAEMON_PID_FILE = BASE_DIR / "data" / "backITup.pid"
 
@@ -263,22 +286,193 @@ _LOGO = """
 """
 
 
-def print_menu(connected: bool):
+def print_menu(connected: bool, role: str):
     os.system("clear")
     print(_LOGO)
     print("  Automated File Backup System")
     if connected:
         print("  [connected to background daemon]")
-    print("\nHello! What do you want to do today?\n")
-    print("[1] Create a new backup system")
-    print("[2] Configure a current backup system")
-    print("[3] Delete a backup system")
-    print("[4] Stop all backup systems")
-    if connected:
-        print("[5] Exit  (daemon keeps running in background)\n")
+    print(f"  Logged in as: {current_user} ({role})")
+
+    if role == auth.ROLE_ADMIN:
+        print("\nHello! What do you want to do today?\n")
+        print("[1] Create a new backup system")
+        print("[2] Configure a current backup system")
+        print("[3] Delete a backup system")
+        print("[4] Stop all backup systems")
+        print("[5] View backup status")
+        print("[6] Trigger a manual backup")
+        print("[7] Manage users")
+        print("[8] Launch Web Dashboard")
+        print("[9] Performance & Recovery")
+        if connected:
+            print("[10] Logout")
+            print("[11] Exit  (daemon keeps running in background)\n")
+        else:
+            print("[10] Logout")
+            print("[11] Run in background")
+            print("[12] Exit\n")
     else:
-        print("[5] Run in background")
-        print("[6] Exit\n")
+        print("\nHello! What do you want to do today?\n")
+        print("[1] View backup status")
+        print("[2] Trigger a manual backup")
+        print("[3] Logout")
+        print("[4] Exit\n")
+
+
+# ── auth actions ────────────────────────────────────────────────────────────────
+
+def first_run_setup():
+    """No users yet → force creation of an admin account before anything else."""
+    os.system("clear")
+    print(_LOGO)
+    print("  First-time setup — create the administrator account.\n")
+    while True:
+        username = input("Choose an admin username: ").strip()
+        if not username:
+            print("Username cannot be empty.\n")
+            continue
+        password = getpass.getpass("Choose an admin password: ").strip()
+        confirm = getpass.getpass("Confirm password: ").strip()
+        if not password:
+            print("Password cannot be empty.\n")
+            continue
+        if password != confirm:
+            print("Passwords did not match. Try again.\n")
+            continue
+        if auth.register_user(username, password, auth.ROLE_ADMIN):
+            print(f"\nAdmin account '{username}' created.")
+            pause()
+            return
+        print("Could not create the account. Try again.\n")
+
+
+def do_login() -> bool:
+    """Prompt for credentials; on success set the global user/role. Returns success."""
+    global current_user, current_role
+    os.system("clear")
+    print(_LOGO)
+    print("  Please log in to continue.\n")
+    for attempt in range(3):
+        username = input("Username: ").strip()
+        password = getpass.getpass("Password: ").strip()
+        if auth.login(username, password):
+            current_user = username
+            current_role = auth.get_role(username)
+            logger.info(f"User '{username}' logged in ({current_role}).")
+            return True
+        remaining = 2 - attempt
+        print(f"Invalid credentials." + (f" {remaining} attempt(s) left.\n" if remaining else "\n"))
+    print("Too many failed attempts.")
+    pause()
+    return False
+
+
+def manage_users():
+    """Admin-only user management: list, add, delete."""
+    if current_role != auth.ROLE_ADMIN:
+        print("Permission denied — admin only.")
+        pause()
+        return
+
+    while True:
+        os.system("clear")
+        print("  User Management\n")
+        users = auth.list_users()
+        for u in users:
+            print(f"  - {u['username']:<20} {u['role']:<6} (created {u['created_at']})")
+        print("\n  [1] Add user")
+        print("  [2] Delete user")
+        print("  [0] Back")
+        sub = input("\nChoice: ").strip()
+
+        if sub == "0":
+            return
+        elif sub == "1":
+            username = input("New username: ").strip()
+            password = getpass.getpass("New password: ").strip()
+            role_raw = input("Role (admin/user) [user]: ").strip().lower()
+            role = auth.ROLE_ADMIN if role_raw == "admin" else auth.ROLE_USER
+            if auth.register_user(username, password, role):
+                print(f"User '{username}' created.")
+            else:
+                print("Could not create user (duplicate or invalid input).")
+            pause()
+        elif sub == "2":
+            target = input("Username to delete: ").strip()
+            if target == current_user:
+                print("You cannot delete the account you are logged in with.")
+                pause()
+                continue
+            confirm = input(f"Delete '{target}'? (y/n): ").strip().lower()
+            if confirm == "y" and auth.delete_user(target):
+                print(f"User '{target}' deleted.")
+            else:
+                print("Cancelled or user not found.")
+            pause()
+        else:
+            print("Invalid choice.")
+            pause()
+
+
+# ── status / manual backup (available to all roles) ─────────────────────────────
+
+def view_status():
+    manager = ConfigManager()
+    configs = manager.load_all()
+    os.system("clear")
+    print("  Backup Status\n")
+    if not configs:
+        print("  No backup systems configured.")
+        pause()
+        return
+    for c in configs:
+        running = "running" if c["name"] in running_systems else "stopped (this process)"
+        enc = "on" if c.get("encryption_enabled") else "off"
+        print(f"  • {c['name']}")
+        print(f"      watch       : {c['watch_folder']}")
+        print(f"      destination : {c['backup_destination']}")
+        print(f"      interval    : {c['interval_minutes']} min   versions: {c['max_versions']}")
+        print(f"      encryption  : {enc}   status: {running}\n")
+    pause()
+
+
+def trigger_manual_backup():
+    manager = ConfigManager()
+    configs = manager.load_all()
+    if not configs:
+        print("No backup systems found.")
+        pause()
+        return
+
+    print("\nAvailable backup systems:")
+    for i, c in enumerate(configs, 1):
+        print(f"  [{i}] {c['name']}")
+    print("  [0] Cancel")
+
+    try:
+        choice = int(input("\nSelect a system to back up now: ").strip())
+        if choice == 0:
+            return
+        if not 1 <= choice <= len(configs):
+            print("Invalid selection.")
+            pause()
+            return
+    except ValueError:
+        print("Invalid input.")
+        pause()
+        return
+
+    config = configs[choice - 1]
+    try:
+        engine = BackupEngine(config, notify=_notifications.put)
+        total = engine.full_sync(announce=False)
+        logger.info(f"Manual backup triggered for '{config['name']}' by {current_user}.")
+        print(f"\nManual backup complete for '{config['name']}' — {total} file(s) processed.")
+    except Exception as e:
+        logger.error(f"Manual backup failed for '{config['name']}': {e}")
+        print("Manual backup failed. See logs for details.")
+    pause()
 
 
 # ── menu actions ──────────────────────────────────────────────────────────────
@@ -323,12 +517,42 @@ def create_backup_system(daemon_pid=None):
     except ValueError:
         max_versions = 5
 
+    # ── Encryption (Feature 1) — set once at creation time ────────────────────
+    encryption_enabled = False
+    salt_str = None
+    key_path = None
+    enable = input("Encrypt backups for this system? (y/n): ").strip().lower()
+    if enable == "y":
+        try:
+            password = getpass.getpass("Set an encryption password: ").strip()
+            confirm = getpass.getpass("Confirm encryption password: ").strip()
+            if not password:
+                print("Empty password — encryption disabled for this system.")
+            elif password != confirm:
+                print("Passwords did not match — encryption disabled for this system.")
+            else:
+                salt = encryption.generate_salt()
+                key = encryption.generate_key(password, salt)
+                # Per-system key file so multiple systems can coexist.
+                safe = "".join(c if c.isalnum() else "_" for c in name)
+                key_path = str(BASE_DIR / "data" / f"{safe}.key")
+                encryption.save_key(key, key_path)
+                salt_str = encryption.encode_salt(salt)
+                encryption_enabled = True
+                print("Encryption enabled. Keep your password safe — it cannot be recovered.")
+        except Exception as e:
+            logger.error(f"Failed to set up encryption for '{name}': {e}")
+            print("Encryption setup failed — continuing without encryption.")
+
     config = {
         "name": name,
         "watch_folder": str(Path(watch_folder).expanduser().resolve()),
         "backup_destination": str(Path(backup_destination).expanduser().resolve()),
         "interval_minutes": interval_minutes,
         "max_versions": max_versions,
+        "encryption_enabled": encryption_enabled,
+        "salt": salt_str,
+        "key_path": key_path,
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -346,6 +570,22 @@ def create_backup_system(daemon_pid=None):
 
 def configure_backup_system(daemon_pid=None):
     manager = ConfigManager()
+
+    print("\nWhat would you like to configure?")
+    print("  [1] A backup system")
+    print("  [2] Email alerts")
+    print("  [0] Cancel")
+    top = input("\nChoice: ").strip()
+    if top == "0":
+        return
+    if top == "2":
+        configure_email_alerts()
+        return
+    if top != "1":
+        print("Invalid choice.")
+        pause()
+        return
+
     configs = manager.load_all()
 
     if not configs:
@@ -510,7 +750,279 @@ def stop_all_systems(daemon_pid=None):
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
+# ── web dashboard (admin only) ──────────────────────────────────────────────────
+
+_dashboard_started = False
+
+
+def launch_dashboard():
+    """Start the Flask + Socket.IO dashboard in a daemon thread (admin only)."""
+    global _dashboard_started
+    if current_role != auth.ROLE_ADMIN:
+        print("Permission denied — admin only.")
+        pause()
+        return
+    if _dashboard_started:
+        print("Dashboard is already running at http://localhost:5000")
+        pause()
+        return
+
+    try:
+        from dashboard.app import create_app
+        from dashboard.socket_events import get_socketio
+
+        app = create_app()
+        socketio = get_socketio()
+
+        def _serve():
+            try:
+                socketio.run(app, host="0.0.0.0", port=5000,
+                             debug=False, use_reloader=False,
+                             allow_unsafe_werkzeug=True)
+            except TypeError:
+                # Older Flask-SocketIO without allow_unsafe_werkzeug.
+                socketio.run(app, host="0.0.0.0", port=5000,
+                             debug=False, use_reloader=False)
+            except Exception as e:
+                logger.error(f"Dashboard server crashed: {e}")
+
+        t = threading.Thread(target=_serve, daemon=True, name="dashboard")
+        t.start()
+        _dashboard_started = True
+        logger.info("Web dashboard launched on port 5000.")
+        print("Dashboard running at http://localhost:5000")
+    except Exception as e:
+        logger.error(f"Failed to launch dashboard: {e}")
+        print(f"Could not launch dashboard: {e}")
+    pause()
+
+
+# ── email alerts configuration ──────────────────────────────────────────────────
+
+def configure_email_alerts():
+    """Prompt for SMTP settings, save them, and send a test email immediately."""
+    if current_role != auth.ROLE_ADMIN:
+        print("Permission denied — admin only.")
+        pause()
+        return
+
+    try:
+        from utils.email_alerts import configure_email, test_email
+    except Exception as e:
+        logger.error(f"Email alerts unavailable: {e}")
+        print("Email alerts module could not be loaded.")
+        pause()
+        return
+
+    print("\nConfigure Email Alerts")
+    smtp_host = input("SMTP host (e.g. smtp.gmail.com): ").strip()
+    port_raw = input("SMTP port (default 587): ").strip()
+    try:
+        smtp_port = int(port_raw) if port_raw else 587
+    except ValueError:
+        smtp_port = 587
+    sender_email = input("Sender email: ").strip()
+    sender_password = getpass.getpass("Sender app password: ").strip()
+    recipient_email = input("Recipient email: ").strip()
+
+    try:
+        configure_email(smtp_host, smtp_port, sender_email, sender_password, recipient_email)
+        if test_email():
+            print("✅ Email configured and test sent!")
+        else:
+            print("❌ Test failed, check your settings.")
+    except Exception as e:
+        logger.error(f"Failed to configure email alerts: {e}")
+        print("❌ Test failed, check your settings.")
+    pause()
+
+
+# ── performance & recovery (admin only) ─────────────────────────────────────────
+
+def _pick_system():
+    """Show a numbered list of systems and return the chosen config, or None."""
+    configs = ConfigManager().load_all()
+    if not configs:
+        print("No backup systems found.")
+        pause()
+        return None
+    print("\nWhich backup system?")
+    for i, c in enumerate(configs, 1):
+        print(f"  [{i}] {c['name']}")
+    print("  [0] Cancel")
+    try:
+        choice = int(input("\nSelect: ").strip())
+    except ValueError:
+        print("Invalid input.")
+        pause()
+        return None
+    if choice == 0:
+        return None
+    if not 1 <= choice <= len(configs):
+        print("Invalid selection.")
+        pause()
+        return None
+    return configs[choice - 1]
+
+
+def performance_menu():
+    """Sub-menu for benchmarking, restore tests, and RTO/RPO reporting."""
+    if current_role != auth.ROLE_ADMIN:
+        print("Permission denied — admin only.")
+        pause()
+        return
+    if bm is None:
+        print("Benchmark module unavailable.")
+        pause()
+        return
+
+    while True:
+        os.system("clear")
+        print("══════════════════════════════")
+        print("  Performance & Recovery")
+        print("══════════════════════════════")
+        print("[1] Run Backup Benchmark")
+        print("[2] Run Restore Test")
+        print("[3] View RTO/RPO Report")
+        print("[4] Generate Full Report")
+        print("[0] Back to Main Menu")
+        choice = input("\nChoice: ").strip()
+
+        if choice == "0":
+            return
+
+        if choice not in ("1", "2", "3", "4"):
+            print("Invalid choice.")
+            pause()
+            continue
+
+        config = _pick_system()
+        if not config:
+            continue
+        name = config["name"]
+
+        try:
+            if choice == "1":
+                print(f"\nRunning backup benchmark for '{name}'...")
+                result = bm.run_backup_benchmark(name)
+                _print_benchmark_result(result)
+            elif choice == "2":
+                print(f"\nRunning restore test for '{name}'...")
+                result = bm.run_restore_test(name)
+                _print_restore_result(result)
+            elif choice == "3":
+                result = bm.calculate_rto_rpo(name)
+                print(f"\nRTO / RPO Report — {name}")
+                print("─" * 40)
+                for label, key in (
+                    ("System", "system"),
+                    ("RTO (seconds)", "rto_seconds"),
+                    ("RPO (minutes)", "rpo_minutes"),
+                    ("Rating", "rating"),
+                    ("Restore tests used", "restore_tests_used"),
+                ):
+                    print(f"  {label:<22}: {result.get(key)}")
+            elif choice == "4":
+                report = bm.generate_benchmark_report(name)
+                print("\n" + report)
+        except Exception as e:
+            logger.error(f"Performance action failed for '{name}': {e}")
+            print(f"Operation failed: {e}")
+        pause()
+
+
+def _print_benchmark_result(result: dict):
+    if result.get("error"):
+        print(f"  Error: {result['error']}")
+        return
+    print("\nBenchmark complete:")
+    print(f"  System       : {result['system']}")
+    print(f"  Timestamp    : {result['timestamp']}")
+    print(f"  Files        : {result['files']}")
+    print(f"  Total size   : {result['total_mb']} MB")
+    print(f"  Duration     : {result['duration_seconds']} s")
+    print(f"  Throughput   : {result['throughput_mbps']} MB/s")
+
+
+def _print_restore_result(result: dict):
+    if result.get("error"):
+        print(f"  Error: {result['error']}")
+        return
+    print("\nRestore test complete:")
+    print(f"  System       : {result['system']}")
+    print(f"  Files tested : {result['files_tested']}")
+    print(f"  Passed       : {result['passed']}")
+    print(f"  Failed       : {result['failed']}")
+    print(f"  Total time   : {result['total_restore_time_seconds']} s")
+    for r in result.get("results", []):
+        status = "PASS" if r.get("passed") else "FAIL"
+        extra = f"  ({r['error']})" if r.get("error") else ""
+        print(f"    [{status}] {r['file']}  —  {r['restore_time_seconds']} s{extra}")
+
+
+def _admin_dispatch(choice: str, daemon_running: bool, daemon_pid):
+    """Handle an admin menu choice. Returns (continue_loop, daemon_running, daemon_pid)."""
+    dpid = daemon_pid if daemon_running else None
+
+    if choice == "1":
+        create_backup_system(dpid)
+    elif choice == "2":
+        configure_backup_system(dpid)
+    elif choice == "3":
+        delete_backup_system(dpid)
+    elif choice == "4":
+        stopped = stop_all_systems(dpid)
+        if stopped and daemon_running:
+            daemon_running, daemon_pid = False, None
+    elif choice == "5":
+        view_status()
+    elif choice == "6":
+        trigger_manual_backup()
+    elif choice == "7":
+        manage_users()
+    elif choice == "8":
+        launch_dashboard()
+    elif choice == "9":
+        performance_menu()
+    elif choice == "10":
+        return "logout", daemon_running, daemon_pid
+    elif choice == "11" and not daemon_running:
+        run_in_background()
+    elif (choice == "11" and daemon_running) or (choice == "12" and not daemon_running):
+        if daemon_running:
+            print("Menu closed. Backup systems continue running in the background.")
+        else:
+            print("Goodbye! Backup systems will stop when this process exits.")
+        sys.exit(0)
+    else:
+        print("Invalid choice.")
+        pause()
+    return True, daemon_running, daemon_pid
+
+
+def _user_dispatch(choice: str, daemon_running: bool):
+    """Handle a (limited) user menu choice. Returns "logout", True, or exits."""
+    if choice == "1":
+        view_status()
+    elif choice == "2":
+        trigger_manual_backup()
+    elif choice == "3":
+        return "logout"
+    elif choice == "4":
+        if daemon_running:
+            print("Menu closed. Backup systems continue running in the background.")
+        else:
+            print("Goodbye! Backup systems will stop when this process exits.")
+        sys.exit(0)
+    else:
+        print("Invalid choice.")
+        pause()
+    return True
+
+
 def main():
+    global current_user, current_role
+
     daemon_running, daemon_pid = is_daemon_running()
 
     if daemon_running:
@@ -518,34 +1030,32 @@ def main():
     else:
         resume_all_systems()
 
+    # ── Authentication (Feature 2) ────────────────────────────────────────────
+    if not auth.users_exist():
+        first_run_setup()
+
+    if not do_login():
+        sys.exit(0)
+
     while True:
         _drain_notifications()
-        print_menu(connected=daemon_running)
+        print_menu(connected=daemon_running, role=current_role)
         choice = input("Enter your choice: ").strip()
         _drain_notifications()
 
-        if choice == "1":
-            create_backup_system(daemon_pid if daemon_running else None)
-        elif choice == "2":
-            configure_backup_system(daemon_pid if daemon_running else None)
-        elif choice == "3":
-            delete_backup_system(daemon_pid if daemon_running else None)
-        elif choice == "4":
-            stopped = stop_all_systems(daemon_pid if daemon_running else None)
-            if stopped and daemon_running:
-                daemon_running = False
-                daemon_pid = None
-        elif choice == "5" and not daemon_running:
-            run_in_background()
-        elif (choice == "5" and daemon_running) or (choice == "6" and not daemon_running):
-            if daemon_running:
-                print("Menu closed. Backup systems continue running in the background.")
-            else:
-                print("Goodbye! Backup systems will stop when this process exits.")
-            sys.exit(0)
+        if current_role == auth.ROLE_ADMIN:
+            result, daemon_running, daemon_pid = _admin_dispatch(
+                choice, daemon_running, daemon_pid
+            )
         else:
-            print("Invalid choice.")
-            pause()
+            result = _user_dispatch(choice, daemon_running)
+
+        if result == "logout":
+            current_user = None
+            current_role = None
+            logger.info("User logged out.")
+            if not do_login():
+                sys.exit(0)
 
 
 if __name__ == "__main__":

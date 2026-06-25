@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+<h1 class="text-2xl font-bold text-gray-800 mb-6">Dashboard</h1>
+
+{% if systems %}
+<div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+  {% for s in systems %}
+  <div class="bg-white rounded-lg shadow p-5">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-lg font-bold text-gray-800">{{ s.name }}</h2>
+      {% if s.status == 'Running' %}
+        <span class="px-2 py-1 text-xs font-semibold rounded bg-green-100 text-green-700">Running</span>
+      {% elif s.status == 'Error' %}
+        <span class="px-2 py-1 text-xs font-semibold rounded bg-red-100 text-red-700">Error</span>
+      {% else %}
+        <span class="px-2 py-1 text-xs font-semibold rounded bg-yellow-100 text-yellow-700">Stopped</span>
+      {% endif %}
+    </div>
+
+    <dl class="text-sm text-gray-600 space-y-1">
+      <div><span class="font-medium text-gray-700">Source:</span> {{ s.source }}</div>
+      <div><span class="font-medium text-gray-700">Destination:</span> {{ s.destination }}</div>
+      <div><span class="font-medium text-gray-700">Last backup:</span> {{ s.last_backup }}</div>
+      <div class="pt-1">
+        {% if s.encryption_enabled %}
+          <span class="px-2 py-1 text-xs font-semibold rounded bg-green-100 text-green-700">Encrypted</span>
+        {% else %}
+          <span class="px-2 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-600">Plain</span>
+        {% endif %}
+      </div>
+    </dl>
+
+    {% if current_user.is_admin %}
+    <div class="mt-4 flex gap-2">
+      <form method="POST" action="{{ url_for('routes.backup_now', system_name=s.name) }}">
+        <button type="submit"
+                class="px-3 py-1.5 text-sm rounded bg-blue-600 hover:bg-blue-700 text-white transition">
+          Backup Now
+        </button>
+      </form>
+      <button type="button"
+              class="px-3 py-1.5 text-sm rounded bg-gray-200 hover:bg-gray-300 text-gray-700 transition">
+        Stop/Resume
+      </button>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-gray-500">No backup systems configured yet.</p>
+{% endif %}
+
+<!-- Live Activity Feed -->
+<h2 class="text-xl font-bold text-gray-800 mt-10 mb-3">Live Activity Feed</h2>
+<div id="activity-feed"
+     class="bg-gray-800 text-green-400 font-mono text-sm rounded-lg p-4 h-64 overflow-y-auto">
+  <div class="text-gray-500">Waiting for backup activity…</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    const feed = document.getElementById("activity-feed");
+    const MAX_LINES = 50;
+    let cleared = false;
+
+    function ts() {
+      return new Date().toLocaleTimeString();
+    }
+
+    function append(line) {
+      if (!cleared) {
+        feed.innerHTML = "";
+        cleared = true;
+      }
+      const el = document.createElement("div");
+      el.textContent = "[" + ts() + "] " + line;
+      feed.appendChild(el);
+      while (feed.children.length > MAX_LINES) {
+        feed.removeChild(feed.firstChild);
+      }
+      feed.scrollTop = feed.scrollHeight;
+    }
+
+    try {
+      const socket = io();
+      socket.on("backup_started", function (d) {
+        append("▶ Backup started: " + (d.system || "?") +
+               (d.total ? " (" + d.total + " files)" : ""));
+      });
+      socket.on("backup_progress", function (d) {
+        append("… " + (d.system || "?") + " — " + (d.count || 0) +
+               (d.total ? "/" + d.total : "") + " files");
+      });
+      socket.on("backup_complete", function (d) {
+        append("✔ Backup complete: " + (d.system || "?") + " — " +
+               (d.count || 0) + " files in " + (d.duration || "?") + "s");
+      });
+      socket.on("backup_failed", function (d) {
+        append("✖ Backup FAILED: " + (d.system || "?") + " — " + (d.error || ""));
+      });
+    } catch (e) {
+      append("Socket.IO unavailable: " + e);
+    }
+  })();
+</script>
+{% endblock %}

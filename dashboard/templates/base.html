@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}backITup{% endblock %} — backITup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+</head>
+<body class="bg-gray-100">
+  <!-- Sidebar -->
+  <aside class="fixed left-0 top-0 h-screen w-64 bg-gray-900 text-gray-200 flex flex-col">
+    <div class="px-6 py-5 text-2xl font-bold text-blue-400 border-b border-gray-800">
+      backITup
+    </div>
+    <nav class="flex-1 px-3 py-4 space-y-1">
+      <a href="{{ url_for('routes.index') }}"
+         class="block px-4 py-2 rounded hover:bg-gray-800 transition">Dashboard</a>
+      <a href="{{ url_for('routes.jobs') }}"
+         class="block px-4 py-2 rounded hover:bg-gray-800 transition">Jobs</a>
+      {% if current_user.is_authenticated and current_user.is_admin %}
+      <a href="{{ url_for('routes.users') }}"
+         class="block px-4 py-2 rounded hover:bg-gray-800 transition">Users</a>
+      {% endif %}
+    </nav>
+    <div class="px-6 py-4 text-xs text-gray-500 border-t border-gray-800">
+      Automated Backup System
+    </div>
+  </aside>
+
+  <!-- Main column -->
+  <div class="ml-64 min-h-screen bg-gray-100">
+    <!-- Top bar -->
+    <header class="flex items-center justify-end gap-4 bg-white shadow px-8 py-4">
+      {% if current_user.is_authenticated %}
+      <span class="text-gray-700 font-medium">{{ current_user.username }}</span>
+      {% if current_user.is_admin %}
+      <span class="px-2 py-1 text-xs font-semibold rounded bg-blue-100 text-blue-700">admin</span>
+      {% else %}
+      <span class="px-2 py-1 text-xs font-semibold rounded bg-gray-200 text-gray-700">user</span>
+      {% endif %}
+      <a href="{{ url_for('routes.logout') }}"
+         class="px-3 py-1 text-sm rounded bg-gray-800 text-white hover:bg-gray-700 transition">Logout</a>
+      {% endif %}
+    </header>
+
+    <!-- Flash messages -->
+    <main class="p-8">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="mb-6 space-y-2">
+            {% for category, message in messages %}
+              <div class="px-4 py-3 rounded text-sm
+                {% if category == 'error' %}bg-red-100 text-red-700{% else %}bg-green-100 text-green-700{% endif %}">
+                {{ message }}
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>
