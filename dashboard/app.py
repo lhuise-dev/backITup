@@ -8,7 +8,7 @@ from flask_login import LoginManager, UserMixin
 
 from core import auth
 from core.logger import get_logger
-from dashboard.socket_events import get_socketio, init_socketio
+from dashboard.socket_events import init_socketio, get_socketio
 
 logger = get_logger()
 
@@ -17,7 +17,6 @@ _SECRET_FILE = _DATA_DIR / "dashboard_secret.key"
 
 
 def _get_secret_key() -> bytes:
-    """Load (or create once) the Flask secret key stored in data/dashboard_secret.key."""
     try:
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         if _SECRET_FILE.exists():
@@ -27,13 +26,10 @@ def _get_secret_key() -> bytes:
         return secret
     except Exception as e:
         logger.error(f"Failed to load/create dashboard secret key: {e}")
-        # Fall back to an ephemeral key so the app still boots.
         return os.urandom(24)
 
 
 class DashboardUser(UserMixin):
-    """Flask-Login user backed by core/auth.py (users.json is the source of truth)."""
-
     def __init__(self, username: str):
         self.id = username
         self.username = username
@@ -45,8 +41,8 @@ class DashboardUser(UserMixin):
 
 
 def create_app():
-    """Build and return a configured Flask app (SocketIO is the shared global)."""
-    # Initialize SocketIO first, before anything else uses it.
+    """Build and return a configured Flask app."""
+    # Initialize SocketIO first before anything else
     init_socketio()
 
     app = Flask(__name__)
